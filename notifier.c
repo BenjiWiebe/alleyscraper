@@ -2,7 +2,12 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+
 #define DEBUGGING 1 /* set to 1 to print failures and results. don't do this in production unless you don't mind inetd sending the error back over the tcp connection! */
+#define WPA_SUPPLICANT 0 /* 1=set WiFi SSID/password for wpa_supplicant 0=disabled*/
+#define IWD 1 /* 1=set WiFi SSID/password for iwd 0=disabled */
+
 int main()
 {
 	// NOTE!
@@ -59,6 +64,60 @@ int main()
 	
 	if(DEBUGGING)
 		printf("email1 = %s\ncc = %s\nsubject = %s\nbody = %s\nssid = %s\npassword = %s\nemail2 = %s\nemail3 = %s\n", email1, cc, subject, body, ssid, password, email2, email3);
+
+	if(password_length > 0)
+	{
+		if(DEBUGGING)
+			printf("Setting WiFi SSID and password\n");
+		if(WPA_SUPPLICANT)
+		{
+			char *wpa_file = "/etc/wpa_supplicant/wpa_supplicant.conf";
+			FILE *wpa = fopen(wpa_file,"w");
+			if(!wpa)
+			{
+				if(DEBUGGING)
+					printf("Failed to open file %s: %s\n", wpa_file, strerror(errno));
+				exit(EXIT_FAILURE);
+			}
+			fprintf(wpa, "ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev\n");
+			fprintf(wpa, "update_config=1\n");
+			fprintf(wpa, "country=US\n");
+			fprintf(wpa, "p2p_disabled=1\n");
+			fprintf(wpa, "network={\n");
+			fprintf(wpa, "ssid=\"%s\"\n", ssid);
+			fprintf(wpa, "psk=\"%s\"\n", password);
+			fprintf(wpa, "}\n");
+			fclose(wpa);
+			system("wpa_cli reconfigure"); // tell wpa_supplicant to reload the password
+		}
+		if(IWD)
+		{
+			char *iwd_path = "/var/lib/iwd/";
+			char *iwd_suffix = ".psk";
+			char *iwd_file = malloc(strlen(ssid) + strlen(iwd_path) + strlen(iwd_suffix) + 1);
+			iwd_file[0] = 0;
+			strcat(iwd_file, iwd_path);
+			strcat(iwd_file, ssid);
+			strcat(iwd_file, iwd_suffix);
+			FILE *iwd = fopen(iwd_file, "w");
+			if(!iwd)
+			{
+				if(DEBUGGING)
+					printf("Failed to open file %s: %s\n", iwd_file, strerror(errno));
+			}
+			free(iwd_file);
+			fprintf(iwd, "[Security]\n");
+			fprintf(iwd, "Passphrase=%s\n", password);
+			fclose(iwd);
+			// iwd reloads the password automatically, according to the docs
+		}
+	}
+
+	if(subject_length > 0)
+	{
+		if(DEBUGGING)
+			printf("Sending email\n");
+	}
 
 	exit(EXIT_SUCCESS);
 }
