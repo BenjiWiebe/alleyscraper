@@ -13,6 +13,9 @@ int main()
 	// NOTE!
 	// NOTE! Field order must be correct for this code to work! It was probably simpler to make the field order not matter but this way it saves a couple of CPU cycles.
 	// NOTE!
+	//
+	// NOTE! For wpa_supplicant, all old WiFi SSID/password information is overwritten. Only the most recently set SSID/password will be used!
+	// NOTE! For iwd, it is DIFFERENT. A new password with the same SSID will overwrite that password, but all old SSID/password combos are untouched!
 
 	// Linux allows 128-byte WPA3 passphrases
 	// Let's account for up to 4x 128-byte email addresses
@@ -68,9 +71,11 @@ int main()
 	if(password_length > 0)
 	{
 		if(DEBUGGING)
-			printf("Setting WiFi SSID and password\n");
+			printf("Setting WiFi SSID and password for:");
 		if(WPA_SUPPLICANT)
 		{
+			if(DEBUGGING)
+				printf(" wpa_supplicant");
 			char *wpa_file = "/etc/wpa_supplicant/wpa_supplicant.conf";
 			FILE *wpa = fopen(wpa_file,"w");
 			if(!wpa)
@@ -90,8 +95,10 @@ int main()
 			fclose(wpa);
 			system("wpa_cli reconfigure"); // tell wpa_supplicant to reload the password
 		}
-		if(IWD)
+		else if(IWD)
 		{
+			if(DEBUGGING)
+				printf(" iwd");
 			char *iwd_path = "/var/lib/iwd/";
 			char *iwd_suffix = ".psk";
 			char *iwd_file = malloc(strlen(ssid) + strlen(iwd_path) + strlen(iwd_suffix) + 1);
@@ -111,6 +118,12 @@ int main()
 			fclose(iwd);
 			// iwd reloads the password automatically, according to the docs
 		}
+		else
+		{
+			if(DEBUGGING)
+				printf(" (none)");
+		}
+		printf("\n");
 	}
 
 	if(subject_length > 0)
