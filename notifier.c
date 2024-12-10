@@ -3,10 +3,25 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <curl/curl.h>
 
-#define DEBUGGING 1 /* set to 1 to print failures and results. don't do this in production unless you don't mind inetd sending the error back over the tcp connection! */
-#define WPA_SUPPLICANT 0 /* 1=set WiFi SSID/password for wpa_supplicant 0=disabled*/
-#define IWD 1 /* 1=set WiFi SSID/password for iwd 0=disabled */
+#ifndef DEBUGGING
+#	define DEBUGGING 1 /* set to 1 to print failures and results. don't do this in production unless you don't mind inetd sending the error back over the tcp connection! */
+#endif
+#ifndef WPA_SUPPLICANT
+#	define WPA_SUPPLICANT 0 /* 1=set WiFi SSID/password for wpa_supplicant 0=disabled*/
+#endif
+#ifndef IWD
+#	define IWD 0 /* 1=set WiFi SSID/password for iwd 0=disabled */
+#endif
+
+#include "secrets.h"
+
+char *email_buffer;
+size_t payload_source(char*, size_t, size_t, void*);
+struct upload_status {
+  size_t bytes_read;
+} upload_ctx = {0};
 
 int main()
 {
@@ -127,11 +142,111 @@ int main()
 		printf("\n");
 	}
 
-	if(subject_length > 0)
+	if(subject_length > 0 && email1_length > 0)
 	{
 		if(DEBUGGING)
 			printf("Sending email\n");
+		CURL *curl;
+		CURLcode res = CURLE_OK;
+		struct curl_slist *recipients = NULL;
+		curl = curl_easy_init();
+		if(!curl)
+		{
+			if(DEBUGGING)
+				printf("loading curl failed\n");
+			exit(EXIT_FAILURE);
+		}
+		curl_easy_setopt(curl, CURLOPT_USERNAME, FROM_ADDRESS);
+		curl_easy_setopt(curl, CURLOPT_PASSWORD, MAIL_PASSWORD);
+		curl_easy_setopt(curl, CURLOPT_URL, MAIL_URL);
+		curl_easy_setopt(curl, CURLOPT_USE_SSL, (long)CURLUSESSL_ALL);
+		curl_easy_setopt(curl, CURLOPT_CAINFO, CA_INFO_PATH);
+		curl_easy_setopt(curl, CURLOPT_MAIL_FROM, FROM_ADDRESS);
+
+		size_t ebb_len = email1_length + email2_length + email3_length + strlen(FROM_ADDRESS) + strlen(FROM_NAME)
+			+ cc_length + subject_length + body_length + 250; // should need no more than 36 extra characters if I did my math right. I don't trust my math...
+		email_buffer = malloc(ebb_len);
+		char *email_tmp = email_buffer;
+		if(!email_buffer)
+		{
+			if(DEBUGGING)
+				printf("failed allocationg email buffer\n");
+			exit(EXIT_FAILURE);
+		}
+
+		email_tmp += sprintf(email_tmp, "From: %s <%s>\r\n", FROM_NAME, FROM_ADDRESS);
+		email_tmp += sprintf(email_tmp, "To: <%s>", email1);
+		recipients = curl_slist_append(recipients, email1);
+		if(email2_length)
+		{
+			email_tmp += sprintf(email_tmp, ",<%s>", email2);
+			recipients = curl_slist_append(recipients, email2);
+		}
+		if(email3_length)
+		{
+			email_tmp += sprintf(email_tmp, ",<%s>", email3);
+			recipients = curl_slist_append(recipients, email3);
+		}
+		email_tmp += sprintf(email_tmp, "\r\n");
+		if(cc_length)
+		{
+			email_tmp += sprintf(email_tmp, "Cc: <%s>\r\n", cc);
+			recipients = curl_slist_append(recipients, cc);
+		}
+		email_tmp += sprintf(email_tmp, "Subject: %s\r\n\r\n", subject);
+		// TODO FIXME does the PLC send \r\n line endings in the body? or are there no newlines at all?
+		email_tmp += sprintf(email_tmp, "%s\r\n", body);
+
+		if(DEBUGGING)
+			printf("\nEmail ready to send:\n\n%s", email_buffer);
+
+		curl_easy_setopt(curl, CURLOPT_MAIL_RCPT, recipients);
+		curl_easy_setopt(curl, CURLOPT_READFUNCTION, payload_source);
+		curl_easy_setopt(curl, CURLOPT_READDATA, &upload_ctx);
+		curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+		if(DEBUGGING)
+			curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+		res = curl_easy_perform(curl);
+
+		free(email_buffer);
+
+		if(res != CURLE_OK)
+		{
+			if(DEBUGGING)
+				printf("Failed to send email: %s\n", curl_easy_strerror(res));
+			exit(EXIT_FAILURE);
+		}
+		curl_slist_free_all(recipients);
+		curl_easy_cleanup(curl);
 	}
 
 	exit(EXIT_SUCCESS);
+}
+
+// copied from libcurl docs example
+size_t payload_source(char *ptr, size_t size, size_t nmemb, void *userp)
+{
+	struct upload_status *upload_ctx = (struct upload_status *)userp;
+	const char *data;
+	size_t room = size * nmemb;
+
+	if((size == 0) || (nmemb == 0) || ((size*nmemb) < 1))
+	{
+		return 0;
+	}
+
+	data = &email_buffer[upload_ctx->bytes_read];
+
+	if(data)
+	{
+		size_t len = strlen(data);
+		if(room < len)
+			len = room;
+		memcpy(ptr, data, len);
+		upload_ctx->bytes_read += len;
+
+		return len;
+	}
+
+	return 0;
 }
