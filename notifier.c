@@ -22,6 +22,7 @@ int main()
 	// Separators sum up to approx 128 bytes.
 	// Let's give 128 each for Body and Subject and SSID. (x3)
 	// So 9x128 should be enough for now. Round it up to 1536 (1.5kb) 'cause round numbers.
+	// (ya don't put this on the public internet...buffer overflow time!)
 	char buf[1536] = {0};
 	char *bufp = buf;
 	ssize_t bytes_read = read(STDIN_FILENO, buf, sizeof(buf));
